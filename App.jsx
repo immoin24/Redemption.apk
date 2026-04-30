@@ -45,17 +45,31 @@ export default function App() {
     setSyncing(false);
   }
 
-  // GRAPH LOGIC: Get last 7 days of steps
-  const last7Days = [...Array(7)].map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    return { day: d.toLocaleDateString('en-US', { weekday: 'short' }), steps: Number(entries[key]?.steps || 0) };
-  }).reverse();
+  // LOGIC: Get current week starting from MONDAY
+  const getMondayStartWeek = () => {
+    const now = new Date();
+    const day = now.getDay(); // 0 is Sun, 1 is Mon...
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
+    const monday = new Date(now.setDate(diff));
+    
+    return [...Array(7)].map((_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      return { 
+        day: d.toLocaleDateString('en-US', { weekday: 'short' }), 
+        steps: Number(entries[key]?.steps || 0),
+        protein: Number(entries[key]?.protein || 0)
+      };
+    });
+  };
 
-  const maxSteps = Math.max(...last7Days.map(d => d.steps), 10000);
+  const weeklyData = getMondayStartWeek();
+  const avgSteps = Math.round(weeklyData.reduce((a, b) => a + b.steps, 0) / 7);
+  const avgProtein = Math.round(weeklyData.reduce((a, b) => a + b.protein, 0) / 7);
+  const maxSteps = Math.max(...weeklyData.map(d => d.steps), 10000);
 
-  if (loading) return <div style={{background: "#080808", color: "#4ade80", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center"}}>LOADING STATS...</div>;
+  if (loading) return <div style={{background: "#080808", color: "#4ade80", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center"}}>CALCULATING TRENDS...</div>;
 
   if (!user) return (
     <div style={{ background: "#080808", color: "#e8e8e8", height: "100vh", padding: "40px", fontFamily: "sans-serif" }}>
@@ -91,32 +105,13 @@ export default function App() {
         </div>
       ) : (
         <div>
-          <h3 style={{textAlign: "center", color: "#4ade80", marginBottom: "30px"}}>7-DAY STEP TREND</h3>
+          <h3 style={{textAlign: "center", color: "#4ade80", marginBottom: "10px"}}>WEEKLY PROGRESS</h3>
+          <p style={{textAlign: "center", fontSize: "10px", color: "#444", marginBottom: "30px"}}>Starting Monday</p>
           
-          {/* THE CHART */}
-          <div style={{display: "flex", alignItems: "flex-end", justifyContent: "space-between", height: "200px", padding: "0 10px", marginBottom: "40px", borderBottom: "1px solid #333"}}>
-            {last7Days.map((d, i) => (
+          <div style={{display: "flex", alignItems: "flex-end", justifyContent: "space-between", height: "180px", padding: "0 10px", marginBottom: "40px", borderBottom: "1px solid #333"}}>
+            {weeklyData.map((d, i) => (
               <div key={i} style={{display: "flex", flexDirection: "column", alignItems: "center", flex: 1}}>
                 <div style={{
-                  width: "25px", 
-                  background: d.steps > 8000 ? "#4ade80" : "#222", 
-                  height: `${(d.steps / maxSteps) * 180}px`, 
-                  borderRadius: "5px 5px 0 0",
-                  transition: "height 0.5s ease"
-                }}></div>
-                <div style={{fontSize: "10px", color: "#666", marginTop: "8px"}}>{d.day}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{background: "#111", padding: "20px", borderRadius: "15px", textAlign: "center"}}>
-            <div style={{fontSize: "12px", color: "#666"}}>AVG DAILY STEPS</div>
-            <div style={{fontSize: "32px", fontWeight: "bold", color: "#4ade80"}}>
-              {Math.round(last7Days.reduce((a, b) => a + b.steps, 0) / 7)}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                  width: "20px", 
+                  background: d.steps >
+                    

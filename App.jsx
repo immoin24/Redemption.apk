@@ -3,9 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 
 // Connection using your specific project credentials
 const SUPABASE_URL = "https://jqioszktfqqtfbkjoosd.supabase.co";
-const SUPABASE_ANON_KEY = "Sb_publishable_Nu_9dHse4KCtH2BDPFRRaA_DTGqKjKp";
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
+const NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_Nu_9dHse4KCtH2BDPFRRaA_DTGqKjKp
+const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const defaultForm = {
   lunch: "",
   dinner: "",

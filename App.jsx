@@ -1,7 +1,10 @@
 import { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const STORAGE_KEY = "daily-health-log-v2";
-const ANTHROPIC_API_KEY = "YOUR_KEY_HERE"; 
+// Connection to your private database
+const SUPABASE_URL = "https://jqioszktfqqtfbkjoosd.supabase.co";
+const SUPABASE_ANON_KEY = "Sb_publishable_Nu_9dHse4KCtH2BDPFRRaA_DTGqKjKp";
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const defaultForm = {
   lunch: "",
@@ -11,13 +14,7 @@ const defaultForm = {
   protein: "",
   steps: "",
   workout: false,
-  notes: "",
-  breakdown: null,
 };
-
-function getTodayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function formatDate(dateStr) {
   const [y, m, d] = dateStr.split("-");
@@ -25,114 +22,127 @@ function formatDate(dateStr) {
   return `${months[parseInt(m)-1]} ${parseInt(d)}, ${y}`;
 }
 
-function StatBar({ label, value, max, color, unit }) {
-  const pct = Math.min(100, (parseFloat(value) / max) * 100) || 0;
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 10, letterSpacing: "0.1em", color: "#666", textTransform: "uppercase", fontFamily: "monospace" }}>{label}</span>
-        <span style={{ fontSize: 12, fontWeight: 700, color: value ? color : "#333", fontFamily: "monospace" }}>
-          {value ? `${value}${unit}` : "—"}
-        </span>
-      </div>
-      <div style={{ height: 3, background: "#1a1a1a", borderRadius: 2, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 2, transition: "width 0.6s ease" }} />
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [view, setView] = useState("log");
   const [entries, setEntries] = useState({});
   const [form, setForm] = useState(defaultForm);
-  const [saved, setSaved] = useState(false);
-  const todayKey = getTodayKey();
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
-    const result = localStorage.getItem(STORAGE_KEY);
-    if (result) {
-      const data = JSON.parse(result);
-      setEntries(data);
-      if (data[todayKey]) setForm(data[todayKey]);
-    }
-  }, [todayKey]);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchLogs(session.user.id);
+      setLoading(false);
+    });
+  }, []);
 
-  function saveEntry() {
-    const updated = { ...entries, [todayKey]: { ...form, savedAt: new Date().toISOString() } };
-    setEntries(updated);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  async function fetchLogs(userId) {
+    const { data } = await supabase.from("daily_logs").select("*").eq("user_id", userId);
+    const logs = {};
+    data?.forEach(row => logs[row.date_key] = row.data);
+    setEntries(logs);
+    const today = new Date().toISOString().slice(0, 10);
+    if (logs[today]) setForm(logs[today]);
   }
 
-  const inp = {
-    background: "#0f0f0f", border: "1px solid #202020", borderRadius: 8,
-    color: "#e8e8e8", padding: "12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none",
-  };
+  async function handleAuth(type) {
+    const { data, error } = type === "login" 
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({ email, password });
+    if (error) alert(error.message);
+    else { setUser(data.user); fetchLogs(data.user.id); }
+  }
 
-  const lbl = { fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "#444", marginBottom: 6, display: "block", fontFamily: "monospace" };
+  async function saveEntry() {
+    setSyncing(true);
+    const dateKey = new Date().toISOString().slice(0, 10);
+    const { error } = await supabase.from("daily_logs").upsert({ 
+      user_id: user.id, 
+      date_key: dateKey, 
+      data: form 
+    }, { onConflict: 'user_id, date_key' });
+    
+    if (!error) {
+      setEntries({ ...entries, [dateKey]: form });
+      alert("✓ Data Saved to Cloud");
+    } else {
+      alert("Error saving: " + error.message);
+    }
+    setSyncing(false);
+  }
+
+  if (loading) return <div style={{background: "#080808", color: "#4ade80", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace"}}>CONNECTING TO DATABASE...</div>;
+
+  if (!user) {
+    return (
+      <div style={{ background: "#080808", color: "#e8e8e8", minHeight: "100vh", padding: "40px 20px", fontFamily: "sans-serif" }}>
+        <h2 style={{color: "#4ade80", letterSpacing: "0.1em"}}>MED-STAT LOGIN</h2>
+        <p style={{color: "#444", fontSize: "12px", marginBottom: "30px"}}>Enter your details to sync between devices.</p>
+        <input style={{width: "100%", padding: "14px", marginBottom: "15px", background: "#0f0f0f", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} placeholder="Email" onChange={e => setEmail(e.target.value)} />
+        <input style={{width: "100%", padding: "14px", marginBottom: "25px", background: "#0f0f0f", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
+        <button onClick={() => handleAuth("login")} style={{width: "100%", padding: "14px", background: "#4ade80", border: "none", fontWeight: "700", borderRadius: "8px", marginBottom: "15px", cursor: "pointer"}}>LOGIN</button>
+        <button onClick={() => handleAuth("signup")} style={{width: "100%", padding: "14px", background: "none", color: "#4ade80", border: "1px solid #4ade80", borderRadius: "8px", cursor: "pointer"}}>SIGN UP</button>
+      </div>
+    );
+  }
+
+  const todayKey = new Date().toISOString().slice(0, 10);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#080808", color: "#e8e8e8", fontFamily: "sans-serif", paddingBottom: "50px" }}>
-      <div style={{ maxWidth: 500, margin: "0 auto", padding: "20px" }}>
-        
-        <header style={{ marginBottom: 30 }}>
-          <div style={{ fontSize: 10, color: "#4ade80", letterSpacing: "0.2em" }}>MED-STAT TRACKER</div>
-          <div style={{ fontSize: 22, fontWeight: "bold" }}>{formatDate(todayKey)}</div>
-        </header>
+    <div style={{ background: "#080808", color: "#e8e8e8", minHeight: "100vh", fontFamily: "sans-serif", padding: "20px" }}>
+      <header style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "30px", borderBottom: "1px solid #1a1a1a", paddingBottom: "15px"}}>
+        <div>
+          <div style={{fontSize: "10px", color: "#4ade80", fontWeight: "bold"}}>LOGGED IN AS</div>
+          <div style={{fontSize: "13px", fontWeight: "600"}}>{user.email}</div>
+        </div>
+        <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} style={{background: "#111", border: "1px solid #222", color: "#666", padding: "6px 12px", borderRadius: "6px", fontSize: "10px", cursor: "pointer"}}>LOGOUT</button>
+      </header>
 
-        <nav style={{ display: "flex", gap: 20, marginBottom: 30, borderBottom: "1px solid #1a1a1a" }}>
-          <button onClick={() => setView("log")} style={{ background: "none", border: "none", color: view === "log" ? "#4ade80" : "#444", paddingBottom: 10, borderBottom: view === "log" ? "2px solid #4ade80" : "none", cursor: "pointer", fontWeight: "bold" }}>LOG</button>
-          <button onClick={() => setView("history")} style={{ background: "none", border: "none", color: view === "history" ? "#4ade80" : "#444", paddingBottom: 10, borderBottom: view === "history" ? "2px solid #4ade80" : "none", cursor: "pointer", fontWeight: "bold" }}>HISTORY</button>
-        </nav>
+      {view === "log" ? (
+        <div style={{display: "flex", flexDirection: "column", gap: "20px"}}>
+          <section>
+            <label style={{fontSize: "10px", color: "#444", marginBottom: "8px", display: "block"}}>PHYSICAL ACTIVITY</label>
+            <div style={{display: "flex", gap: "10px", marginBottom: "10px"}}>
+              <input type="number" value={form.steps} onChange={e => setForm({...form, steps: e.target.value})} placeholder="Steps" style={{flex: 1, padding: "12px", background: "#0f0f0f", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
+              <button onClick={() => setForm({...form, workout: !form.workout})} style={{padding: "0 20px", background: form.workout ? "#4ade80" : "#0f0f0f", color: form.workout ? "#000" : "#444", border: "1px solid #222", borderRadius: "8px", fontWeight: "bold", fontSize: "12px"}}>WORKOUT</button>
+            </div>
+          </section>
 
-        {view === "log" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            {saved && <div style={{ background: "#0b1f12", color: "#4ade80", padding: "10px", borderRadius: 8, fontSize: 12 }}>✓ Data synced to device memory</div>}
-            
-            <section>
-              <label style={lbl}>Physical Activity</label>
-              <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
-                <input type="number" value={form.steps} onChange={e => setForm({...form, steps: e.target.value})} placeholder="Steps" style={inp} />
-                <button 
-                  onClick={() => setForm({...form, workout: !form.workout})}
-                  style={{ background: form.workout ? "#4ade80" : "#111", color: form.workout ? "#000" : "#444", border: "1px solid #222", borderRadius: 8, padding: "0 15px", cursor: "pointer", fontWeight: "bold", fontSize: 12 }}
-                >
-                  {form.workout ? "WORKOUT ✓" : "WORKOUT?"}
-                </button>
+          <section>
+            <label style={{fontSize: "10px", color: "#444", marginBottom: "8px", display: "block"}}>NUTRITION</label>
+            <textarea value={form.lunch} onChange={e => setForm({...form, lunch: e.target.value})} placeholder="What did you eat today?" rows={3} style={{width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #222", color: "#fff", borderRadius: "8px", marginBottom: "10px"}} />
+            <div style={{display: "flex", gap: "10px"}}>
+              <input type="number" value={form.calories} onChange={e => setForm({...form, calories: e.target.value})} placeholder="Cals" style={{flex: 1, padding: "12px", background: "#0f0f0f", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
+              <input type="number" value={form.protein} onChange={e => setForm({...form, protein: e.target.value})} placeholder="Protein (g)" style={{flex: 1, padding: "12px", background: "#0f0f0f", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
+            </div>
+          </section>
+
+          <button onClick={saveEntry} disabled={syncing} style={{padding: "16px", background: "#4ade80", color: "#000", border: "none", fontWeight: "bold", borderRadius: "10px", cursor: "pointer", marginTop: "10px"}}>
+            {syncing ? "SYNCING..." : "SAVE & SYNC DATA"}
+          </button>
+          
+          <button onClick={() => setView("history")} style={{color: "#4ade80", background: "none", border: "none", fontSize: "13px", fontWeight: "600", cursor: "pointer"}}>VIEW HISTORY</button>
+        </div>
+      ) : (
+        <div>
+          <button onClick={() => setView("log")} style={{color: "#4ade80", background: "none", border: "none", marginBottom: "20px", fontWeight: "bold", cursor: "pointer"}}>← BACK TO LOG</button>
+          {Object.keys(entries).sort().reverse().map(date => (
+            <div key={date} style={{background: "#0f0f0f", padding: "20px", borderRadius: "12px", marginBottom: "15px", border: "1px solid #1a1a1a"}}>
+              <div style={{fontWeight: "bold", marginBottom: "10px", color: "#4ade80"}}>{formatDate(date)}</div>
+              <div style={{fontSize: "13px", color: "#888", display: "flex", justifyContent: "space-between"}}>
+                <span>Steps: {entries[date].steps || "0"}</span>
+                <span>{entries[date].calories || "0"} kcal</span>
+                <span>{entries[date].protein || "0"}g P</span>
               </div>
-            </section>
-
-            <section>
-              <label style={lbl}>Nutrition Log</label>
-              <textarea value={form.lunch} onChange={e => setForm({...form, lunch: e.target.value})} placeholder="Lunch details..." rows={2} style={{...inp, marginBottom: "10px"}} />
-              <textarea value={form.dinner} onChange={e => setForm({...form, dinner: e.target.value})} placeholder="Dinner details..." rows={2} style={{...inp, marginBottom: "10px"}} />
-              <div style={{ display: "flex", gap: "10px" }}>
-                <input type="number" value={form.calories} onChange={e => setForm({...form, calories: e.target.value})} placeholder="Total Cals" style={inp} />
-                <input type="number" value={form.protein} onChange={e => setForm({...form, protein: e.target.value})} placeholder="Protein (g)" style={inp} />
-              </div>
-            </section>
-
-            <button onClick={saveEntry} style={{ width: "100%", background: "#4ade80", color: "#000", border: "none", borderRadius: 10, padding: "16px", fontWeight: "bold", cursor: "pointer", marginTop: "10px" }}>
-              SAVE TODAY'S LOG
-            </button>
-          </div>
-        ) : (
-          <div>
-            {Object.keys(entries).sort().reverse().map(date => (
-              <div key={date} style={{ background: "#0f0f0f", padding: "20px", borderRadius: 12, marginBottom: 15, border: "1px solid #1a1a1a" }}>
-                <div style={{ fontWeight: "bold", marginBottom: 15, fontSize: 14 }}>{formatDate(date)}</div>
-                <StatBar label="Steps" value={entries[date].steps} max={10000} color="#60a5fa" unit="" />
-                <StatBar label="Calories" value={entries[date].calories} max={2500} color="#facc15" unit=" kcal" />
-                <StatBar label="Protein" value={entries[date].protein} max={150} color="#4ade80" unit="g" />
-                {entries[date].workout && <div style={{ fontSize: 10, color: "#4ade80", marginTop: 10, fontWeight: "bold" }}>🏋️ WORKOUT COMPLETED</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              {entries[date].workout && <div style={{fontSize: "10px", color: "#4ade80", marginTop: "10px", fontWeight: "bold"}}>🏋️ WORKOUT LOGGED</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
-}
- 
+                           }

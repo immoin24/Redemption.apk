@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // Connection using your specific project credentials
-const SUPABASE_URL = "https://jqioszktfqqtfbkjoosd.supabase.co";
+const NEXT_PUBLIC_SUPABASE_URL = "https://jqioszktfqqtfbkjoosd.supabase.co";
 const NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_Nu_9dHse4KCtH2BDPFRRaA_DTGqKjKp
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const defaultForm = {

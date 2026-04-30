@@ -9,13 +9,13 @@ const defaultForm = { lunch: "", dinner: "", snacks: "", workout_details: "", ca
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [view, setView] = useState("log");
   const [entries, setEntries] = useState({});
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -23,11 +23,10 @@ export default function App() {
       if (session?.user) fetchLogs(session.user.id);
       setLoading(false);
     });
-    return () => { if(supabase.auth.onAuthStateChange) supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null)); };
   }, []);
 
   async function fetchLogs(userId) {
-    const { data } = await supabase.from("daily_logs").select("*").eq("user_id", userId);
+    const { data } = await supabase.from("daily_logs").select("*").eq("user_id", userId).order('date_key', { ascending: true });
     if (data) {
       const logs = {};
       data.forEach(row => logs[row.date_key] = row.data);
@@ -37,97 +36,85 @@ export default function App() {
     }
   }
 
-  async function handleAuth(type) {
-    const { error } = type === "login" 
-      ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password });
-    if (error) alert(error.message);
-  }
-
   async function saveEntry() {
     if (!user) return;
     setSyncing(true);
     const dateKey = new Date().toISOString().slice(0, 10);
     const { error } = await supabase.from("daily_logs").upsert({ user_id: user.id, date_key: dateKey, data: form }, { onConflict: 'user_id, date_key' });
     if (!error) { setEntries(prev => ({ ...prev, [dateKey]: form })); alert("✓ Synced"); }
-    else alert("Error: " + error.message);
     setSyncing(false);
   }
 
-  // Progress Calculations
-  const stats = Object.values(entries);
-  const avgSteps = stats.length ? Math.round(stats.reduce((acc, curr) => acc + Number(curr.steps || 0), 0) / stats.length) : 0;
-  const totalWorkouts = stats.filter(s => s.workout).length;
+  // GRAPH LOGIC: Get last 7 days of steps
+  const last7Days = [...Array(7)].map((_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    return { day: d.toLocaleDateString('en-US', { weekday: 'short' }), steps: Number(entries[key]?.steps || 0) };
+  }).reverse();
 
-  if (loading) return <div style={{background: "#080808", color: "#4ade80", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center"}}>CONNECTING...</div>;
+  const maxSteps = Math.max(...last7Days.map(d => d.steps), 10000);
 
-  if (!user) {
-    return (
-      <div style={{ background: "#080808", color: "#e8e8e8", height: "100vh", padding: "40px", fontFamily: "sans-serif" }}>
-        <h2 style={{color: "#4ade80"}}>MED-STAT</h2>
-        <input style={{width: "100%", padding: "12px", marginBottom: "10px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} placeholder="Email" onChange={e => setEmail(e.target.value)} />
-        <input style={{width: "100%", padding: "12px", marginBottom: "20px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
-        <button onClick={() => handleAuth("login")} style={{width: "100%", padding: "12px", background: "#4ade80", border: "none", fontWeight: "bold", borderRadius: "8px"}}>LOGIN</button>
-      </div>
-    );
-  }
+  if (loading) return <div style={{background: "#080808", color: "#4ade80", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center"}}>LOADING STATS...</div>;
+
+  if (!user) return (
+    <div style={{ background: "#080808", color: "#e8e8e8", height: "100vh", padding: "40px", fontFamily: "sans-serif" }}>
+      <h2 style={{color: "#4ade80"}}>MED-STAT</h2>
+      <input style={{width: "100%", padding: "12px", marginBottom: "10px", background: "#111", border: "1px solid #222", color: "#fff"}} placeholder="Email" onChange={e => setEmail(e.target.value)} />
+      <input style={{width: "100%", padding: "12px", marginBottom: "20px", background: "#111", border: "1px solid #222", color: "#fff"}} type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
+      <button onClick={async () => { const { error } = await supabase.auth.signInWithPassword({email, password}); if(error) alert(error.message); }} style={{width: "100%", padding: "12px", background: "#4ade80", border: "none", fontWeight: "bold"}}>LOGIN</button>
+    </div>
+  );
 
   return (
     <div style={{ background: "#080808", color: "#e8e8e8", minHeight: "100vh", fontFamily: "sans-serif", padding: "20px" }}>
-      <header style={{display: "flex", justifyContent: "space-between", marginBottom: "20px", borderBottom: "1px solid #222", paddingBottom: "10px"}}>
+      <header style={{display: "flex", justifyContent: "space-between", marginBottom: "20px"}}>
         <span style={{color: "#4ade80", fontSize: "12px"}}>{user.email}</span>
-        <div style={{display: "flex", gap: "10px"}}>
-          <button onClick={() => setView("progress")} style={{background: "none", border: "none", color: "#4ade80", fontSize: "10px"}}>STATS</button>
-          <button onClick={() => supabase.auth.signOut()} style={{color: "#666", background: "none", border: "none", fontSize: "10px"}}>LOGOUT</button>
+        <div style={{display: "flex", gap: "15px"}}>
+          <button onClick={() => setView(view === "progress" ? "log" : "progress")} style={{background: "none", border: "none", color: "#4ade80", fontWeight: "bold"}}>{view === "progress" ? "BACK" : "STATS"}</button>
+          <button onClick={() => supabase.auth.signOut()} style={{color: "#666", background: "none", border: "none"}}>EXIT</button>
         </div>
       </header>
 
       {view === "log" ? (
-        <div style={{display: "flex", flexDirection: "column", gap: "12px"}}>
-          <input type="number" value={form.steps} onChange={e => setForm({...form, steps: e.target.value})} placeholder="Steps Walked" style={{padding: "12px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
-          
+        <div style={{display: "flex", flexDirection: "column", gap: "15px"}}>
+          <input type="number" value={form.steps} onChange={e => setForm({...form, steps: e.target.value})} placeholder="Steps" style={{padding: "15px", background: "#111", border: "1px solid #333", color: "#fff", borderRadius: "10px", fontSize: "18px"}} />
+          <button onClick={() => setForm({...form, workout: !form.workout})} style={{padding: "12px", background: form.workout ? "#4ade80" : "#111", color: form.workout ? "#000" : "#fff", border: "1px solid #333", borderRadius: "10px"}}>WORKOUT {form.workout ? "✓" : "+"}</button>
+          {form.workout && <textarea value={form.workout_details} onChange={e => setForm({...form, workout_details: e.target.value})} placeholder="Exercises..." style={{padding: "12px", background: "#111", border: "1px solid #333", color: "#fff", borderRadius: "10px"}} />}
+          <textarea value={form.lunch} onChange={e => setForm({...form, lunch: e.target.value})} placeholder="Lunch..." style={{padding: "12px", background: "#111", border: "1px solid #333", color: "#fff", borderRadius: "10px"}} />
+          <textarea value={form.dinner} onChange={e => setForm({...form, dinner: e.target.value})} placeholder="Dinner..." style={{padding: "12px", background: "#111", border: "1px solid #333", color: "#fff", borderRadius: "10px"}} />
           <div style={{display: "flex", gap: "10px"}}>
-             <button onClick={() => setForm({...form, workout: !form.workout})} style={{flex: 1, padding: "12px", background: form.workout ? "#4ade80" : "#111", color: form.workout ? "#000" : "#fff", border: "1px solid #222", borderRadius: "8px"}}>WORKOUT {form.workout ? "✓" : "?"}</button>
+            <input type="number" value={form.calories} onChange={e => setForm({...form, calories: e.target.value})} placeholder="Cals" style={{flex: 1, padding: "12px", background: "#111", border: "1px solid #333", color: "#fff", borderRadius: "10px"}} />
+            <input type="number" value={form.protein} onChange={e => setForm({...form, protein: e.target.value})} placeholder="Prot" style={{flex: 1, padding: "12px", background: "#111", border: "1px solid #333", color: "#fff", borderRadius: "10px"}} />
           </div>
-          {form.workout && <textarea value={form.workout_details} onChange={e => setForm({...form, workout_details: e.target.value})} placeholder="What exercises did you do?" rows={2} style={{padding: "12px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />}
-
-          <textarea value={form.lunch} onChange={e => setForm({...form, lunch: e.target.value})} placeholder="Lunch details..." rows={2} style={{padding: "12px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
-          <textarea value={form.dinner} onChange={e => setForm({...form, dinner: e.target.value})} placeholder="Dinner details..." rows={2} style={{padding: "12px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
-          
-          <div style={{display: "flex", gap: "10px"}}>
-            <input type="number" value={form.calories} onChange={e => setForm({...form, calories: e.target.value})} placeholder="Total Cals" style={{flex: 1, padding: "12px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
-            <input type="number" value={form.protein} onChange={e => setForm({...form, protein: e.target.value})} placeholder="Protein" style={{flex: 1, padding: "12px", background: "#111", border: "1px solid #222", color: "#fff", borderRadius: "8px"}} />
-          </div>
-          
-          <button onClick={saveEntry} disabled={syncing} style={{padding: "16px", background: "#4ade80", color: "#000", border: "none", fontWeight: "bold", borderRadius: "10px", marginTop: "10px"}}>{syncing ? "SYNCING..." : "SAVE & SYNC"}</button>
-          <button onClick={() => setView("history")} style={{color: "#888", background: "none", border: "none", fontSize: "12px"}}>VIEW RECENT HISTORY</button>
-        </div>
-      ) : view === "progress" ? (
-        <div style={{textAlign: "center"}}>
-           <button onClick={() => setView("log")} style={{color: "#4ade80", background: "none", border: "none", marginBottom: "20px", float: "left"}}>← BACK</button>
-           <h3 style={{color: "#4ade80", marginTop: "40px"}}>OVERALL PROGRESS</h3>
-           <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px", marginTop: "20px"}}>
-              <div style={{background: "#111", padding: "20px", borderRadius: "12px"}}>
-                <div style={{fontSize: "24px", fontWeight: "bold"}}>{avgSteps}</div>
-                <div style={{fontSize: "10px", color: "#666"}}>AVG STEPS</div>
-              </div>
-              <div style={{background: "#111", padding: "20px", borderRadius: "12px"}}>
-                <div style={{fontSize: "24px", fontWeight: "bold"}}>{totalWorkouts}</div>
-                <div style={{fontSize: "10px", color: "#666"}}>TOTAL WORKOUTS</div>
-              </div>
-           </div>
-           <p style={{fontSize: "11px", color: "#444", marginTop: "30px"}}>Keep logging daily to see your monthly trends here.</p>
+          <button onClick={saveEntry} style={{padding: "18px", background: "#4ade80", color: "#000", border: "none", fontWeight: "bold", borderRadius: "12px", fontSize: "16px"}}>{syncing ? "SAVING..." : "SAVE & SYNC"}</button>
         </div>
       ) : (
         <div>
-          <button onClick={() => setView("log")} style={{color: "#4ade80", background: "none", border: "none", marginBottom: "20px"}}>← BACK</button>
-          {Object.keys(entries).sort().reverse().map(date => (
-            <div key={date} style={{background: "#0f0f0f", padding: "15px", borderRadius: "12px", marginBottom: "10px", border: "1px solid #1a1a1a"}}>
-              <div style={{fontWeight: "bold", color: "#4ade80"}}>{date}</div>
-              <div style={{fontSize: "12px", marginTop: "5px"}}>Steps: {entries[date].steps || 0} | Protein: {entries[date].protein || 0}g</div>
-              {entries[date].workout_details && <div style={{fontSize: "11px", color: "#666", fontStyle: "italic", marginTop: "5px"}}>Gym: {entries[date].workout_details}</div>}
+          <h3 style={{textAlign: "center", color: "#4ade80", marginBottom: "30px"}}>7-DAY STEP TREND</h3>
+          
+          {/* THE CHART */}
+          <div style={{display: "flex", alignItems: "flex-end", justifyContent: "space-between", height: "200px", padding: "0 10px", marginBottom: "40px", borderBottom: "1px solid #333"}}>
+            {last7Days.map((d, i) => (
+              <div key={i} style={{display: "flex", flexDirection: "column", alignItems: "center", flex: 1}}>
+                <div style={{
+                  width: "25px", 
+                  background: d.steps > 8000 ? "#4ade80" : "#222", 
+                  height: `${(d.steps / maxSteps) * 180}px`, 
+                  borderRadius: "5px 5px 0 0",
+                  transition: "height 0.5s ease"
+                }}></div>
+                <div style={{fontSize: "10px", color: "#666", marginTop: "8px"}}>{d.day}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{background: "#111", padding: "20px", borderRadius: "15px", textAlign: "center"}}>
+            <div style={{fontSize: "12px", color: "#666"}}>AVG DAILY STEPS</div>
+            <div style={{fontSize: "32px", fontWeight: "bold", color: "#4ade80"}}>
+              {Math.round(last7Days.reduce((a, b) => a + b.steps, 0) / 7)}
             </div>
-          ))}
+          </div>
         </div>
       )}
     </div>
